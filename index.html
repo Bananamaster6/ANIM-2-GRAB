@@ -533,6 +533,13 @@ const fmtLevel   = document.getElementById('fmtLevel');
 
 const ss = (msg, cls='') => { statusEl.className='status'+(cls?' '+cls:''); statusEl.textContent=msg; };
 
+window.addEventListener('error', evt=>{
+  if(evt?.error) console.error(evt.error);
+});
+window.addEventListener('unhandledrejection', evt=>{
+  console.error(evt.reason);
+});
+
 function createGLTFLoader(manager){
   const loader = new THREE.GLTFLoader(manager);
 
@@ -702,7 +709,7 @@ function renderLoop(){
 }
 
 // ── MODEL LOADING ─────────────────────────────────────────────────────────
-function loadModelFile(fileList){
+async function loadModelFile(fileList){
   const files = Array.from(fileList || []);
   if(!files.length) return;
 
@@ -712,9 +719,13 @@ function loadModelFile(fileList){
     return;
   }
 
+  const isGLB = /\.glb$/i.test(rootFile.name);
+  const rootPath = (rootFile.webkitRelativePath || rootFile.name).replace(/[^\/]*$/, '');
+
   ss('Loading model…','load');
-  showImportOverlay('Importing model…', 'Opening file set…', 3);
+  showImportOverlay('Importing model…', 'Opening file set…', 4);
   initThree();
+  await new Promise(requestAnimationFrame);
 
   // Remove previous model
   if(scene) scene.children.filter(c=>c.userData.isModel).forEach(c=>scene.remove(c));
@@ -724,31 +735,42 @@ function loadModelFile(fileList){
   const fileMap = new Map();
   const blobURLs = [];
   let done = false;
-  let loadHintTimer = null;
 
   for(const file of files){
-    const path = file.webkitRelativePath || file.name;
-    fileMap.set(path, file);
+    const key = file.webkitRelativePath || file.name;
+    fileMap.set(key.replace(/\\/g, '/'), file);
+    fileMap.set(file.name.replace(/\\/g, '/'), file);
   }
-
-  const rootPath = (rootFile.webkitRelativePath || rootFile.name).replace(rootFile.name, '');
-  const rootURL = URL.createObjectURL(rootFile);
-  blobURLs.push(rootURL);
 
   const cleanup = ()=>{
     while(blobURLs.length){
-      URL.revokeObjectURL(blobURLs.pop());
+      try{ URL.revokeObjectURL(blobURLs.pop()); } catch {}
     }
   };
 
-  const baseURL = THREE.LoaderUtils.extractUrlBase(rootURL);
+  const resolveFile = (url, path='') => {
+    const clean = decodeURI(String(url || '')).replace(/^\.?\//, '');
+    const clean2 = clean.replace(/^\/+/, '');
+    const candidateList = [
+      (path || '') + clean,
+      (path || '') + clean2,
+      rootPath + clean,
+      rootPath + clean2,
+      clean,
+      clean2
+    ];
+    for(const key of candidateList){
+      const normalized = key.replace(/\\/g, '/');
+      if(fileMap.has(normalized)) return fileMap.get(normalized);
+    }
+    return null;
+  };
+
   loadingManager.setURLModifier((url, path)=>{
-    const normalizedURL = rootPath + decodeURI(url)
-      .replace(baseURL, '')
-      .replace(/^(\.?\/)/, '');
-    if(fileMap.has(normalizedURL)){
-      const blob = fileMap.get(normalizedURL);
-      const blobURL = URL.createObjectURL(blob);
+    if(/^data:|^blob:|^https?:/i.test(url)) return url;
+    const file = resolveFile(url, path);
+    if(file){
+      const blobURL = URL.createObjectURL(file);
       blobURLs.push(blobURL);
       return blobURL;
     }
@@ -757,10 +779,53 @@ function loadModelFile(fileList){
 
   const loader = createGLTFLoader(loadingManager);
 
-  const finishLoad = gltf=>{
+  const parseGLTF = (data, path='') => new Promise((resolve, reject)=>{
+    try{
+      loader.parse(data, path, resolve, reject);
+    }catch(err){
+      reject(err);
+    }
+  });
+
+  const readRoot = () => new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(reader.error || new Error('Could not read file.'));
+    reader.onabort = ()=>reject(new Error('File read aborted.'));
+    reader.onprogress = evt=>{
+      if(done) return;
+      if(evt && evt.lengthComputable && evt.total > 0){
+        const pct = Math.max(1, Math.min(45, Math.round((evt.loaded / evt.total) * 45)));
+        updateImportOverlay(pct, `Reading file… ${Math.round((evt.loaded / evt.total) * 100)}%`);
+      }
+    };
+    reader.onload = ()=>resolve(reader.result);
+    if(isGLB) reader.readAsArrayBuffer(rootFile);
+    else reader.readAsText(rootFile);
+  });
+
+  const failLoad = err=>{
     if(done) return;
     done = true;
-    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
+    cleanup();
+    hideImportOverlay();
+    const msg = err?.message || String(err || 'Unknown error');
+    ss('Failed to load model: ' + msg, 'err');
+    console.error(err);
+  };
+
+  try{
+    updateImportOverlay(9, 'Reading file…');
+    const rootData = await readRoot();
+    if(done) return;
+    updateImportOverlay(isGLB ? 55 : 50, isGLB ? 'Parsing GLB…' : 'Parsing GLTF…');
+    await new Promise(requestAnimationFrame);
+
+    const gltf = await parseGLTF(rootData, rootPath);
+    if(done) return;
+    updateImportOverlay(80, 'Finalizing model…');
+    await new Promise(requestAnimationFrame);
+
+    done = true;
     cleanup();
 
     gltfData = gltf;
@@ -771,97 +836,63 @@ function loadModelFile(fileList){
     scene.add(model);
     previewEmpty.style.display='none';
 
-    requestAnimationFrame(()=>{
-      updateImportOverlay(92, 'Finalizing model…');
+    modelBones = [];
+    const seenBones = new Set();
 
-      modelBones = [];
-      const seenBones = new Set();
+    model.traverse(obj=>{
+      if(obj.isSkinnedMesh && obj.skeleton && Array.isArray(obj.skeleton.bones)){
+        for(const bone of obj.skeleton.bones){
+          if(!bone || !bone.name || seenBones.has(bone.name)) continue;
+          seenBones.add(bone.name);
+          modelBones.push({name: bone.name, obj: bone});
+        }
+      }
+    });
 
+    if(modelBones.length === 0){
       model.traverse(obj=>{
-        if(obj.isSkinnedMesh && obj.skeleton && Array.isArray(obj.skeleton.bones)){
-          for(const bone of obj.skeleton.bones){
-            if(!bone || !bone.name || seenBones.has(bone.name)) continue;
-            seenBones.add(bone.name);
-            modelBones.push({name: bone.name, obj: bone});
-          }
+        if((obj.isBone || obj.type === 'Bone') && obj.name && !seenBones.has(obj.name)){
+          seenBones.add(obj.name);
+          modelBones.push({name: obj.name, obj});
         }
       });
+    }
 
-      if(modelBones.length === 0){
-        model.traverse(obj=>{
-          if((obj.isBone || obj.type === 'Bone') && obj.name && !seenBones.has(obj.name)){
-            seenBones.add(obj.name);
-            modelBones.push({name: obj.name, obj});
-          }
-        });
-      }
+    boneLookup = new Map();
+    for(const b of modelBones){
+      boneLookup.set(b.name, b.obj);
+    }
 
-      boneLookup = new Map();
-      for(const b of modelBones){
-        boneLookup.set(b.name, b.obj);
-      }
-
-      animSelField.style.display = animations.length > 0 ? 'flex' : 'none';
-      animSel.innerHTML = '';
-      animations.forEach((anim, i)=>{
-        const o = document.createElement('option');
-        o.value = i;
-        o.textContent = anim.name && anim.name !== '' ? anim.name : `Animation ${i+1}`;
-        animSel.appendChild(o);
-      });
-
-      if(animations.length > 0){
-        previewMixer = new THREE.AnimationMixer(model);
-        playAnimation(0);
-      }
-
-      document.getElementById('sBones').textContent = modelBones.length;
-      document.getElementById('sAnims').textContent = animations.length;
-      document.getElementById('sDur').textContent = animations.length ? animations[0].duration.toFixed(1) : '—';
-
-      modelDrop.classList.add('loaded');
-      modelDrop.querySelector('.drop-txt').innerHTML = `<strong>${rootFile.name}</strong><br>${modelBones.length} bones · ${animations.length} animations`;
-
-      rebuildBoneMap();
-      updateBuildBtn();
-      timelineWrap.style.display='flex';
-      hideImportOverlay();
-      ss(`Loaded "${rootFile.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
+    animSelField.style.display = animations.length > 0 ? 'flex' : 'none';
+    animSel.innerHTML = '';
+    animations.forEach((anim, i)=>{
+      const o = document.createElement('option');
+      o.value = i;
+      o.textContent = anim.name && anim.name !== '' ? anim.name : `Animation ${i+1}`;
+      animSel.appendChild(o);
     });
-  };
 
-  const failLoad = err=>{
-    if(done) return;
-    done = true;
-    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
-    cleanup();
+    if(animations.length > 0){
+      previewMixer = new THREE.AnimationMixer(model);
+      playAnimation(0);
+    }
+
+    document.getElementById('sBones').textContent = modelBones.length;
+    document.getElementById('sAnims').textContent = animations.length;
+    document.getElementById('sDur').textContent = animations.length ? animations[0].duration.toFixed(1) : '—';
+
+    modelDrop.classList.add('loaded');
+    modelDrop.querySelector('.drop-txt').innerHTML = `<strong>${rootFile.name}</strong><br>${modelBones.length} bones · ${animations.length} animations`;
+
+    rebuildBoneMap();
+    updateBuildBtn();
+    timelineWrap.style.display='flex';
     hideImportOverlay();
-    ss('Failed to load model: ' + (err?.message || err), 'err');
-    console.error(err);
-  };
-
-  loadHintTimer = setTimeout(()=>{
-    if(done) return;
-    updateImportOverlay(16, 'Reading model…');
-  }, 250);
-
-  loader.load(
-    rootURL,
-    gltf=>{
-      updateImportOverlay(78, 'Parsing model…');
-      requestAnimationFrame(()=>finishLoad(gltf));
-    },
-    xhr=>{
-      if(done) return;
-      if(xhr && xhr.lengthComputable && xhr.total > 0){
-        const pct = Math.max(1, Math.min(88, Math.round((xhr.loaded / xhr.total) * 88)));
-        updateImportOverlay(pct, `Reading file… ${Math.round((xhr.loaded / xhr.total) * 100)}%`);
-      }
-    },
-    err=>failLoad(err)
-  );
+    ss(`Loaded "${rootFile.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
+  }catch(err){
+    failLoad(err);
+  }
 }
-
 
 function playAnimation(idx){
   if(!previewMixer || !animations[idx]) return;
