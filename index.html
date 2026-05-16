@@ -431,6 +431,9 @@ select option{background:var(--s2)}
 <!-- three.js from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/DRACOLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/KTX2Loader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/libs/meshopt_decoder.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
 
 <script>
@@ -519,14 +522,18 @@ function createGLTFLoader(){
   const loader = new THREE.GLTFLoader();
 
   if(THREE.DRACOLoader){
-    const dracoLoader = new THREE.DRACOLoader();
-    dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/draco/');
-    loader.setDRACOLoader(dracoLoader);
+    try{
+      const dracoLoader = new THREE.DRACOLoader();
+      dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/draco/');
+      loader.setDRACOLoader(dracoLoader);
+    }catch(err){
+      console.warn('DRACO loader setup failed:', err);
+    }
   }
 
-  if(window.KTX2Loader){
+  if(THREE.KTX2Loader){
     try{
-      const ktx2Loader = new window.KTX2Loader();
+      const ktx2Loader = new THREE.KTX2Loader();
       ktx2Loader.setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/basis/');
       if(renderer) ktx2Loader.detectSupport(renderer);
       loader.setKTX2Loader(ktx2Loader);
@@ -535,9 +542,9 @@ function createGLTFLoader(){
     }
   }
 
-  if(window.MeshoptDecoder){
+  if(window.MeshoptDecoder || typeof MeshoptDecoder !== 'undefined'){
     try{
-      loader.setMeshoptDecoder(window.MeshoptDecoder);
+      loader.setMeshoptDecoder(window.MeshoptDecoder || MeshoptDecoder);
     }catch(err){
       console.warn('Meshopt decoder setup failed:', err);
     }
@@ -692,13 +699,11 @@ function loadModelFile(file){
   if(previewMixer){ previewMixer.stopAllAction(); previewMixer = null; }
 
   const loader = createGLTFLoader();
-  const url = URL.createObjectURL(file);
   let done = false;
   let loadHintTimer = null;
 
   const cleanup = ()=>{
     if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
-    URL.revokeObjectURL(url);
   };
 
   const finishLoad = gltf=>{
@@ -796,21 +801,53 @@ function loadModelFile(file){
     updateImportOverlay(16, 'Reading model…');
   }, 250);
 
-  loader.load(
-    url,
-    gltf=>{
-      updateImportOverlay(78, 'Parsing model…');
-      requestAnimationFrame(()=>finishLoad(gltf));
-    },
-    xhr=>{
+  const isGLTF = /\.gltf$/i.test(file.name);
+
+  if(isGLTF){
+    const reader = new FileReader();
+    reader.onprogress = e=>{
       if(done) return;
-      if(xhr && xhr.lengthComputable && xhr.total > 0){
-        const pct = Math.max(1, Math.min(88, Math.round((xhr.loaded / xhr.total) * 88)));
-        updateImportOverlay(pct, `Reading file… ${Math.round((xhr.loaded / xhr.total) * 100)}%`);
+      if(e.lengthComputable && e.total > 0){
+        const pct = Math.max(1, Math.min(70, Math.round((e.loaded / e.total) * 70)));
+        updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
       }
-    },
-    err=>failLoad(err)
-  );
+    };
+    reader.onerror = ()=>failLoad(new Error('Could not read file'));
+    reader.onload = async e=>{
+      try{
+        updateImportOverlay(78, 'Parsing model…');
+        const text = e.target.result;
+        const gltf = await loader.parseAsync(text, '');
+        updateImportOverlay(90, 'Finalizing model…');
+        requestAnimationFrame(()=>finishLoad(gltf));
+      }catch(err){
+        failLoad(err);
+      }
+    };
+    reader.readAsText(file);
+  } else {
+    const reader = new FileReader();
+    reader.onprogress = e=>{
+      if(done) return;
+      if(e.lengthComputable && e.total > 0){
+        const pct = Math.max(1, Math.min(70, Math.round((e.loaded / e.total) * 70)));
+        updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
+      }
+    };
+    reader.onerror = ()=>failLoad(new Error('Could not read file'));
+    reader.onload = async e=>{
+      try{
+        updateImportOverlay(78, 'Parsing model…');
+        const buffer = e.target.result;
+        const gltf = await loader.parseAsync(buffer, '');
+        updateImportOverlay(90, 'Finalizing model…');
+        requestAnimationFrame(()=>finishLoad(gltf));
+      }catch(err){
+        failLoad(err);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
 }
 
 function playAnimation(idx){
