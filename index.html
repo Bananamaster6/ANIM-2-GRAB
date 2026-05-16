@@ -505,6 +505,7 @@ const importOverlay = document.getElementById('importOverlay');
 const importTitle   = document.getElementById('importTitle');
 const importSub     = document.getElementById('importSub');
 const importBarFill = document.getElementById('importBarFill');
+let importPulseTimer = null;
 const timelineWrap  = document.getElementById('timelineWrap');
 const tlScrub    = document.getElementById('tlScrub');
 const tlTime     = document.getElementById('tlTime');
@@ -526,7 +527,27 @@ function updateImportOverlay(pct, sub){
   if(sub !== undefined) importSub.textContent = sub;
 }
 
+function startImportPulse(){
+  stopImportPulse();
+  let pct = 6;
+  let dir = 1;
+  importPulseTimer = setInterval(()=>{
+    pct += dir * 3;
+    if(pct >= 84){ pct = 84; dir = -1; }
+    if(pct <= 8){ pct = 8; dir = 1; }
+    updateImportOverlay(pct, `Reading file… ${Math.round(pct)}%`);
+  }, 120);
+}
+
+function stopImportPulse(){
+  if(importPulseTimer){
+    clearInterval(importPulseTimer);
+    importPulseTimer = null;
+  }
+}
+
 function hideImportOverlay(){
+  stopImportPulse();
   importOverlay.classList.remove('show');
   importBarFill.style.width = '0%';
   importSub.textContent = 'Preparing import';
@@ -633,6 +654,7 @@ function loadModelFile(file){
   if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
   ss('Loading model…','load');
   showImportOverlay('Importing model…', 'Reading file…', 0);
+  startImportPulse();
   initThree();
 
   // Remove previous model
@@ -740,13 +762,23 @@ function loadModelFile(file){
   };
 
   const reader = new FileReader();
-  reader.onerror = ()=>{ hideImportOverlay(); ss('Could not read model file.','err'); };
+  reader.onerror = ()=>{
+    hideImportOverlay();
+    ss('Could not read model file.','err');
+  };
+  reader.onloadstart = ()=>{
+    updateImportOverlay(10, 'Reading file…');
+    startImportPulse();
+  };
   reader.onprogress = e=>{
-    if(!e.lengthComputable) return;
-    const pct = Math.max(1, Math.min(90, Math.round((e.loaded / e.total) * 90)));
+    if(!e.lengthComputable){
+      return;
+    }
+    const pct = Math.max(1, Math.min(85, Math.round((e.loaded / e.total) * 85)));
     updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
   };
   reader.onload = e=>{
+    stopImportPulse();
     updateImportOverlay(95, 'Parsing model…');
     try{
       loader.parse(
