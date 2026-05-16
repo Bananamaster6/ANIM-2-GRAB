@@ -147,15 +147,13 @@ select option{background:var(--s2)}
 .anim-canvas{display:block;width:100%;height:220px}
 .anim-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--m);font-size:12px;font-family:var(--mono);pointer-events:none}
 .anim-empty .ico{font-size:36px}
-.import-overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:3;background:linear-gradient(180deg,rgba(7,8,13,.55),rgba(7,8,13,.82));backdrop-filter:blur(1px);pointer-events:none}
-.import-overlay.show{display:flex}
-.import-card{width:min(320px,82%);padding:16px 18px;border-radius:16px;border:1px solid rgba(192,132,252,.22);background:rgba(12,14,22,.92);box-shadow:0 14px 40px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:12px;align-items:center}
-.import-wheel{width:44px;height:44px;border-radius:50%;border:4px solid rgba(255,255,255,.12);border-top-color:var(--a);animation:spin 1s linear infinite}
-.import-title{font-family:var(--ui);font-size:13px;font-weight:700;color:var(--t);text-align:center}
-.import-sub{font-family:var(--mono);font-size:10px;color:var(--m);text-align:center;line-height:1.5}
-.import-bar{width:100%;height:8px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
-.import-bar>span{display:block;height:100%;width:0%;border-radius:inherit;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .12s linear}
-@keyframes spin{to{transform:rotate(360deg)}}
+.loader-overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:rgba(7,8,13,.76);backdrop-filter:blur(2px);pointer-events:none}
+.loader-overlay.show{display:flex}
+.loader-wheel{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.12);border-top-color:var(--a);animation:spin .8s linear infinite}
+.loader-text{font-family:var(--mono);font-size:11px;color:var(--t)}
+.loader-bar{width:min(240px,70%);height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.loader-bar > div{height:100%;width:0%;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .12s linear}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .timeline{padding:10px 16px;border-top:1px solid var(--b);display:flex;align-items:center;gap:10px}
 .tl-scrub{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:999px;background:rgba(255,255,255,.08);outline:none;cursor:pointer}
 .tl-scrub::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--a);border:2px solid var(--bg);cursor:pointer}
@@ -384,13 +382,10 @@ select option{background:var(--s2)}
         </div>
         <div class="anim-preview">
           <canvas id="previewCanvas" class="anim-canvas"></canvas>
-          <div class="import-overlay" id="importOverlay" aria-live="polite" aria-atomic="true">
-            <div class="import-card">
-              <div class="import-wheel"></div>
-              <div class="import-title" id="importTitle">Importing model…</div>
-              <div class="import-sub" id="importSub">Preparing import</div>
-              <div class="import-bar"><span id="importBarFill"></span></div>
-            </div>
+          <div class="loader-overlay" id="modelLoader">
+            <div class="loader-wheel"></div>
+            <div class="loader-text" id="loaderText">Loading model…</div>
+            <div class="loader-bar"><div id="loaderBar"></div></div>
           </div>
           <div class="anim-empty" id="previewEmpty">
             <span class="ico">🎬</span>
@@ -462,8 +457,6 @@ select option{background:var(--s2)}
 // State
 let gltfData = null;       // loaded GLTF scene
 let modelBones = [];       // [{name, bone (Object3D)}]
-let boneLookup = new Map();
-let sortedBonesByY = [];
 let animations = [];       // THREE.AnimationClip[]
 let grabJson = null;       // parsed Grab level JSON
 let grabGroups = [];       // [{name, objectID, node}] group nodes in grab JSON
@@ -501,11 +494,9 @@ const boneMapInfo= document.getElementById('boneMapInfo');
 const pillsEl    = document.getElementById('pills');
 const previewCanvas = document.getElementById('previewCanvas');
 const previewEmpty  = document.getElementById('previewEmpty');
-const importOverlay = document.getElementById('importOverlay');
-const importTitle   = document.getElementById('importTitle');
-const importSub     = document.getElementById('importSub');
-const importBarFill = document.getElementById('importBarFill');
-let importPulseTimer = null;
+const modelLoader   = document.getElementById('modelLoader');
+const loaderText    = document.getElementById('loaderText');
+const loaderBar     = document.getElementById('loaderBar');
 const timelineWrap  = document.getElementById('timelineWrap');
 const tlScrub    = document.getElementById('tlScrub');
 const tlTime     = document.getElementById('tlTime');
@@ -514,44 +505,12 @@ const fmtJson    = document.getElementById('fmtJson');
 const fmtLevel   = document.getElementById('fmtLevel');
 
 const ss = (msg, cls='') => { statusEl.className='status'+(cls?' '+cls:''); statusEl.textContent=msg; };
-
-function showImportOverlay(title='Importing model…', sub='Preparing import', pct=0){
-  importOverlay.classList.add('show');
-  importTitle.textContent = title;
-  importSub.textContent = sub;
-  importBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
-}
-
-function updateImportOverlay(pct, sub){
-  importBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
-  if(sub !== undefined) importSub.textContent = sub;
-}
-
-function startImportPulse(){
-  stopImportPulse();
-  let pct = 6;
-  let dir = 1;
-  importPulseTimer = setInterval(()=>{
-    pct += dir * 3;
-    if(pct >= 84){ pct = 84; dir = -1; }
-    if(pct <= 8){ pct = 8; dir = 1; }
-    updateImportOverlay(pct, `Reading file… ${Math.round(pct)}%`);
-  }, 120);
-}
-
-function stopImportPulse(){
-  if(importPulseTimer){
-    clearInterval(importPulseTimer);
-    importPulseTimer = null;
-  }
-}
-
-function hideImportOverlay(){
-  stopImportPulse();
-  importOverlay.classList.remove('show');
-  importBarFill.style.width = '0%';
-  importSub.textContent = 'Preparing import';
-}
+const setLoader = (show, text='Loading model…', pct=null) => {
+  if(!modelLoader) return;
+  modelLoader.classList.toggle('show', !!show);
+  if(loaderText) loaderText.textContent = text;
+  if(loaderBar && pct != null) loaderBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+};
 
 // ── TOGGLES ───────────────────────────────────────────────────────────────
 function setupToggle(id, descId, onCb){
@@ -653,71 +612,67 @@ function loadModelFile(file){
   if(!file) return;
   if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
   ss('Loading model…','load');
-  showImportOverlay('Importing model…', 'Opening file…', 3);
-  initThree();
+  setLoader(true, 'Reading file…', 0);
 
+  initThree();
   // Remove previous model
   if(scene) scene.children.filter(c=>c.userData.isModel).forEach(c=>scene.remove(c));
   if(previewMixer){ previewMixer.stopAllAction(); previewMixer = null; }
 
   const loader = new THREE.GLTFLoader();
-  const url = URL.createObjectURL(file);
-  let done = false;
-  let loadHintTimer = null;
+  const isGlb = /\.glb$/i.test(file.name);
+  const reader = new FileReader();
 
-  const cleanup = ()=>{
-    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
-    URL.revokeObjectURL(url);
+  reader.onprogress = e => {
+    if(e.lengthComputable && e.total > 0){
+      setLoader(true, 'Reading file…', (e.loaded / e.total) * 60);
+    } else {
+      setLoader(true, 'Reading file…', 10);
+    }
   };
 
-  const finishLoad = gltf=>{
-    if(done) return;
-    done = true;
-    cleanup();
-    gltfData = gltf;
-    animations = gltf.animations || [];
+  reader.onerror = () => {
+    setLoader(false);
+    ss('Could not read file.','err');
+  };
 
-    // Add to scene first so the model appears as soon as parsing is done.
-    const model = gltf.scene;
-    model.userData.isModel = true;
-    scene.add(model);
-    previewEmpty.style.display='none';
+  reader.onload = e => {
+    const data = e.target.result;
+    setLoader(true, 'Parsing model…', 70);
 
-    // Defer the heavier post-processing to the next frame so the UI can paint.
-    requestAnimationFrame(()=>{
-      updateImportOverlay(92, 'Finalizing model…');
+    loader.parse(data, '', gltf => {
+      gltfData = gltf;
+      animations = gltf.animations || [];
 
-      // Skip the expensive auto-fit pass during import so the model appears sooner.
-      // The user can still inspect the loaded model in the preview immediately.
+      // Add to scene
+      const model = gltf.scene;
+      model.userData.isModel = true;
+      // Auto-scale to fit view
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3()).length();
+      const center = box.getCenter(new THREE.Vector3());
+      if(size > 0){
+        const s = 3 / size;
+        model.scale.setScalar(s);
+        model.position.sub(center.multiplyScalar(s));
+        model.position.y += 1;
+      }
+      scene.add(model);
+      previewEmpty.style.display='none';
 
-      // Collect bones from skinned meshes first (much faster than traversing every object).
+      // Collect only actual bones
       modelBones = [];
-      const seenBones = new Set();
-
       model.traverse(obj=>{
-        if(obj.isSkinnedMesh && obj.skeleton && Array.isArray(obj.skeleton.bones)){
-          for(const bone of obj.skeleton.bones){
-            if(!bone || !bone.name || seenBones.has(bone.name)) continue;
-            seenBones.add(bone.name);
-            modelBones.push({name: bone.name, obj: bone});
-          }
+        if(obj.isBone === true || obj.type === 'Bone'){
+          modelBones.push({name:obj.name, obj});
         }
       });
-
-      // Fallback: if no skinned-mesh bones were found, keep actual bones only.
-      if(modelBones.length === 0){
-        model.traverse(obj=>{
-          if((obj.isBone || obj.type === 'Bone') && obj.name && !seenBones.has(obj.name)){
-            seenBones.add(obj.name);
-            modelBones.push({name: obj.name, obj});
-          }
-        });
-      }
-
-      boneLookup = new Map();
-      for(const b of modelBones){
-        boneLookup.set(b.name, b.obj);
-      }
+      // Deduplicate
+      const seen = new Set();
+      modelBones = modelBones.filter(b=>{
+        if(seen.has(b.name)) return false;
+        seen.add(b.name); return true;
+      });
 
       // Populate animation selector
       animSelField.style.display = animations.length > 0 ? 'flex' : 'none';
@@ -747,39 +702,20 @@ function loadModelFile(file){
       rebuildBoneMap();
       updateBuildBtn();
       timelineWrap.style.display='flex';
-      hideImportOverlay();
+      setLoader(false);
       ss(`Loaded "${file.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
+
+    }, err => {
+      setLoader(false);
+      ss('Failed to parse model: ' + err.message, 'err');
     });
   };
 
-  const failLoad = err=>{
-    if(done) return;
-    done = true;
-    cleanup();
-    hideImportOverlay();
-    ss('Failed to load model: ' + (err?.message || err), 'err');
-  };
-
-  loadHintTimer = setTimeout(()=>{
-    if(done) return;
-    updateImportOverlay(16, 'Reading model…');
-  }, 250);
-
-  loader.load(
-    url,
-    gltf=>{
-      updateImportOverlay(78, 'Parsing model…');
-      requestAnimationFrame(()=>finishLoad(gltf));
-    },
-    xhr=>{
-      if(done) return;
-      if(xhr && xhr.lengthComputable && xhr.total > 0){
-        const pct = Math.max(1, Math.min(88, Math.round((xhr.loaded / xhr.total) * 88)));
-        updateImportOverlay(pct, `Reading file… ${Math.round((xhr.loaded / xhr.total) * 100)}%`);
-      }
-    },
-    err=>failLoad(err)
-  );
+  if(isGlb){
+    reader.readAsArrayBuffer(file);
+  } else {
+    reader.readAsText(file);
+  }
 }
 
 function playAnimation(idx){
@@ -884,7 +820,7 @@ function guessBone(groupName){
   const keywords = BONE_KEYWORDS[groupName] || [groupName.toLowerCase()];
   // Exact match first
   for(const kw of keywords){
-    const found = boneLookup.get(kw) || modelBones.find(b=>b.name.toLowerCase()===kw);
+    const found = modelBones.find(b=>b.name.toLowerCase()===kw);
     if(found) return {bone:found, confidence:'good'};
   }
   // Partial match
@@ -892,8 +828,12 @@ function guessBone(groupName){
     const found = modelBones.find(b=>b.name.toLowerCase().includes(kw)||kw.includes(b.name.toLowerCase()));
     if(found) return {bone:found, confidence:'guess'};
   }
-  // Fallback: positional heuristics by group (uses cached order)
-  const sorted = sortedBonesByY.length ? sortedBonesByY : modelBones;
+  // Fallback: positional heuristics by group
+  const sorted = [...modelBones].sort((a,b)=>{
+    const ya = a.obj.getWorldPosition(new THREE.Vector3()).y;
+    const yb = b.obj.getWorldPosition(new THREE.Vector3()).y;
+    return ya - yb; // lowest to highest
+  });
   if(groupName==='body' && sorted.length>0) return {bone:sorted[Math.floor(sorted.length*0.4)], confidence:'guess'};
   if(groupName==='head' && sorted.length>0) return {bone:sorted[sorted.length-1], confidence:'guess'};
   return null;
@@ -1012,7 +952,7 @@ function buildLevel(){
     mixer.setTime(t);
     for(const [groupName, boneName] of boneMap){
       if(!boneName) continue;
-      const boneObj = boneLookup.get(boneName) || modelBones.find(b=>b.name===boneName)?.obj;
+      const boneObj = modelBones.find(b=>b.name===boneName)?.obj;
       if(!boneObj) continue;
       const wp = new THREE.Vector3();
       const wr = new THREE.Quaternion();
