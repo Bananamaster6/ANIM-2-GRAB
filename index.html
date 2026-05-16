@@ -147,6 +147,15 @@ select option{background:var(--s2)}
 .anim-canvas{display:block;width:100%;height:220px}
 .anim-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--m);font-size:12px;font-family:var(--mono);pointer-events:none}
 .anim-empty .ico{font-size:36px}
+.import-overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:3;background:linear-gradient(180deg,rgba(7,8,13,.55),rgba(7,8,13,.82));backdrop-filter:blur(1px);pointer-events:none}
+.import-overlay.show{display:flex}
+.import-card{width:min(320px,82%);padding:16px 18px;border-radius:16px;border:1px solid rgba(192,132,252,.22);background:rgba(12,14,22,.92);box-shadow:0 14px 40px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:12px;align-items:center}
+.import-wheel{width:44px;height:44px;border-radius:50%;border:4px solid rgba(255,255,255,.12);border-top-color:var(--a);animation:spin 1s linear infinite}
+.import-title{font-family:var(--ui);font-size:13px;font-weight:700;color:var(--t);text-align:center}
+.import-sub{font-family:var(--mono);font-size:10px;color:var(--m);text-align:center;line-height:1.5}
+.import-bar{width:100%;height:8px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
+.import-bar>span{display:block;height:100%;width:0%;border-radius:inherit;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .12s linear}
+@keyframes spin{to{transform:rotate(360deg)}}
 .timeline{padding:10px 16px;border-top:1px solid var(--b);display:flex;align-items:center;gap:10px}
 .tl-scrub{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:999px;background:rgba(255,255,255,.08);outline:none;cursor:pointer}
 .tl-scrub::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--a);border:2px solid var(--bg);cursor:pointer}
@@ -375,6 +384,14 @@ select option{background:var(--s2)}
         </div>
         <div class="anim-preview">
           <canvas id="previewCanvas" class="anim-canvas"></canvas>
+          <div class="import-overlay" id="importOverlay" aria-live="polite" aria-atomic="true">
+            <div class="import-card">
+              <div class="import-wheel"></div>
+              <div class="import-title" id="importTitle">Importing model…</div>
+              <div class="import-sub" id="importSub">Preparing import</div>
+              <div class="import-bar"><span id="importBarFill"></span></div>
+            </div>
+          </div>
           <div class="anim-empty" id="previewEmpty">
             <span class="ico">🎬</span>
             <span>3D preview appears after loading</span>
@@ -484,6 +501,10 @@ const boneMapInfo= document.getElementById('boneMapInfo');
 const pillsEl    = document.getElementById('pills');
 const previewCanvas = document.getElementById('previewCanvas');
 const previewEmpty  = document.getElementById('previewEmpty');
+const importOverlay = document.getElementById('importOverlay');
+const importTitle   = document.getElementById('importTitle');
+const importSub     = document.getElementById('importSub');
+const importBarFill = document.getElementById('importBarFill');
 const timelineWrap  = document.getElementById('timelineWrap');
 const tlScrub    = document.getElementById('tlScrub');
 const tlTime     = document.getElementById('tlTime');
@@ -492,6 +513,24 @@ const fmtJson    = document.getElementById('fmtJson');
 const fmtLevel   = document.getElementById('fmtLevel');
 
 const ss = (msg, cls='') => { statusEl.className='status'+(cls?' '+cls:''); statusEl.textContent=msg; };
+
+function showImportOverlay(title='Importing model…', sub='Preparing import', pct=0){
+  importOverlay.classList.add('show');
+  importTitle.textContent = title;
+  importSub.textContent = sub;
+  importBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+
+function updateImportOverlay(pct, sub){
+  importBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  if(sub !== undefined) importSub.textContent = sub;
+}
+
+function hideImportOverlay(){
+  importOverlay.classList.remove('show');
+  importBarFill.style.width = '0%';
+  importSub.textContent = 'Preparing import';
+}
 
 // ── TOGGLES ───────────────────────────────────────────────────────────────
 function setupToggle(id, descId, onCb){
@@ -593,6 +632,7 @@ function loadModelFile(file){
   if(!file) return;
   if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
   ss('Loading model…','load');
+  showImportOverlay('Importing model…', 'Reading file…', 0);
   initThree();
 
   // Remove previous model
@@ -613,6 +653,8 @@ function loadModelFile(file){
 
     // Defer the heavier post-processing to the next frame so the UI can paint.
     requestAnimationFrame(()=>{
+      updateImportOverlay(92, 'Finalizing model…');
+
       // Skip the expensive auto-fit pass during import so the model appears sooner.
       // The user can still inspect the loaded model in the preview immediately.
 
@@ -687,17 +729,25 @@ function loadModelFile(file){
       rebuildBoneMap();
       updateBuildBtn();
       timelineWrap.style.display='flex';
+      hideImportOverlay();
       ss(`Loaded "${file.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
     });
   };
 
   const failLoad = err=>{
+    hideImportOverlay();
     ss('Failed to load model: ' + (err?.message || err), 'err');
   };
 
   const reader = new FileReader();
-  reader.onerror = ()=>ss('Could not read model file.','err');
+  reader.onerror = ()=>{ hideImportOverlay(); ss('Could not read model file.','err'); };
+  reader.onprogress = e=>{
+    if(!e.lengthComputable) return;
+    const pct = Math.max(1, Math.min(90, Math.round((e.loaded / e.total) * 90)));
+    updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
+  };
   reader.onload = e=>{
+    updateImportOverlay(95, 'Parsing model…');
     try{
       loader.parse(
         e.target.result,
@@ -706,9 +756,13 @@ function loadModelFile(file){
           // Let the UI paint the loading state before heavier post-processing.
           requestAnimationFrame(()=>finishLoad(gltf));
         },
-        failLoad
+        err=>{
+          hideImportOverlay();
+          failLoad(err);
+        }
       );
     }catch(err){
+      hideImportOverlay();
       failLoad(err);
     }
   };
