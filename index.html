@@ -147,15 +147,6 @@ select option{background:var(--s2)}
 .anim-canvas{display:block;width:100%;height:220px}
 .anim-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--m);font-size:12px;font-family:var(--mono);pointer-events:none}
 .anim-empty .ico{font-size:36px}
-.import-overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:3;background:linear-gradient(180deg,rgba(7,8,13,.55),rgba(7,8,13,.82));backdrop-filter:blur(1px);pointer-events:none}
-.import-overlay.show{display:flex}
-.import-card{width:min(320px,82%);padding:16px 18px;border-radius:16px;border:1px solid rgba(192,132,252,.22);background:rgba(12,14,22,.92);box-shadow:0 14px 40px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:12px;align-items:center}
-.import-wheel{width:44px;height:44px;border-radius:50%;border:4px solid rgba(255,255,255,.12);border-top-color:var(--a);animation:spin 1s linear infinite}
-.import-title{font-family:var(--ui);font-size:13px;font-weight:700;color:var(--t);text-align:center}
-.import-sub{font-family:var(--mono);font-size:10px;color:var(--m);text-align:center;line-height:1.5}
-.import-bar{width:100%;height:8px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
-.import-bar>span{display:block;height:100%;width:0%;border-radius:inherit;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .12s linear}
-@keyframes spin{to{transform:rotate(360deg)}}
 .timeline{padding:10px 16px;border-top:1px solid var(--b);display:flex;align-items:center;gap:10px}
 .tl-scrub{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:999px;background:rgba(255,255,255,.08);outline:none;cursor:pointer}
 .tl-scrub::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--a);border:2px solid var(--bg);cursor:pointer}
@@ -249,7 +240,7 @@ select option{background:var(--s2)}
           <div class="field">
             <label>3D Model File</label>
             <div class="drop" id="modelDrop">
-              <input type="file" id="modelFile" accept=".glb,.gltf" multiple webkitdirectory/>
+              <input type="file" id="modelFile" accept=".glb,.gltf"/>
               <div class="drop-ico">🦴</div>
               <div class="drop-txt"><strong>Drop GLB or GLTF here</strong><br>Must contain a skeleton + animations</div>
             </div>
@@ -375,17 +366,24 @@ select option{background:var(--s2)}
         </div>
       </div>
 
-      <!-- Import status -->
+      <!-- 3D Preview -->
       <div class="panel">
         <div class="ph">
           <div class="ph-dots"><span class="da"></span><span class="db"></span><span class="dc"></span></div>
-          <span class="ph-title">import.status</span>
+          <span class="ph-title">3d_preview.canvas</span>
+          <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--a)" id="previewFrame"></span>
         </div>
-        <div class="pb">
-          <div style="background:var(--s2);border-radius:10px;padding:12px 14px">
-            <div style="font-size:10px;color:var(--a2);font-weight:700;letter-spacing:.08em;margin-bottom:6px">NO PREVIEW</div>
-            <p style="font-family:var(--mono);font-size:11px;color:var(--t);line-height:1.75">This version imports the model, reads its bones and animations, and bakes animation from bone names without rendering a preview.</p>
+        <div class="anim-preview">
+          <canvas id="previewCanvas" class="anim-canvas"></canvas>
+          <div class="anim-empty" id="previewEmpty">
+            <span class="ico">🎬</span>
+            <span>3D preview appears after loading</span>
           </div>
+        </div>
+        <div class="timeline" id="timelineWrap" style="display:none">
+          <button class="btn btn-s" id="playPreviewBtn" style="padding:6px 12px;font-size:11px">▶</button>
+          <input type="range" class="tl-scrub" id="tlScrub" min="0" max="100" value="0"/>
+          <span class="tl-time" id="tlTime">0.0s</span>
         </div>
       </div>
 
@@ -414,15 +412,23 @@ select option{background:var(--s2)}
 </div><!-- /page -->
 
 <!-- three.js from CDN -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/DRACOLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/KTX2Loader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
-
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
 <script type="module">
-import { MeshoptDecoder } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/meshopt_decoder.module.js';
-window.MeshoptDecoder = MeshoptDecoder;
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+window._THREE = THREE;
+window._GLTFLoader = GLTFLoader;
+window._OrbitControls = OrbitControls;
+// Signal that modules are ready
+window.dispatchEvent(new Event('three-ready'));
 </script>
 
 <script>
@@ -454,8 +460,6 @@ window.MeshoptDecoder = MeshoptDecoder;
 // State
 let gltfData = null;       // loaded GLTF scene
 let modelBones = [];       // [{name, bone (Object3D)}]
-let boneLookup = new Map();
-let sortedBonesByY = [];
 let animations = [];       // THREE.AnimationClip[]
 let grabJson = null;       // parsed Grab level JSON
 let grabGroups = [];       // [{name, objectID, node}] group nodes in grab JSON
@@ -465,6 +469,12 @@ let levelJson = null;
 let objMode = false;
 let limbMode = false;
 let twoJoints = false;
+let previewPlaying = false;
+let previewMixer = null;
+let previewAction = null;
+let previewClock = null;
+let animDuration = 0;
+let renderer, scene, camera, controls, previewAnimFrame;
 
 // DOM
 const modelDrop  = document.getElementById('modelDrop');
@@ -485,74 +495,16 @@ const boneTable  = document.getElementById('boneTable');
 const boneMapEmpty=document.getElementById('boneMapEmpty');
 const boneMapInfo= document.getElementById('boneMapInfo');
 const pillsEl    = document.getElementById('pills');
-const importOverlay = document.getElementById('importOverlay');
-const importTitle   = document.getElementById('importTitle');
-const importSub     = document.getElementById('importSub');
-const importBarFill = document.getElementById('importBarFill');
-let importPulseTimer = null;
+const previewCanvas = document.getElementById('previewCanvas');
+const previewEmpty  = document.getElementById('previewEmpty');
+const timelineWrap  = document.getElementById('timelineWrap');
+const tlScrub    = document.getElementById('tlScrub');
+const tlTime     = document.getElementById('tlTime');
+const playPreviewBtn = document.getElementById('playPreviewBtn');
 const fmtJson    = document.getElementById('fmtJson');
 const fmtLevel   = document.getElementById('fmtLevel');
 
 const ss = (msg, cls='') => { statusEl.className='status'+(cls?' '+cls:''); statusEl.textContent=msg; };
-
-window.addEventListener('error', evt=>{
-  if(evt?.error) console.error(evt.error);
-});
-window.addEventListener('unhandledrejection', evt=>{
-  console.error(evt.reason);
-});
-
-function createGLTFLoader(manager){
-  const loader = new THREE.GLTFLoader(manager);
-
-  if(typeof THREE.DRACOLoader === 'function'){
-    try{
-      const dracoLoader = new THREE.DRACOLoader();
-      dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/draco/');
-      loader.setDRACOLoader(dracoLoader);
-    }catch(err){
-      console.warn('DRACO loader setup failed:', err);
-    }
-  }
-
-  if(typeof THREE.KTX2Loader === 'function'){
-    try{
-      const ktx2Loader = new THREE.KTX2Loader();
-      ktx2Loader.setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/basis/');
-      loader.setKTX2Loader(ktx2Loader);
-    }catch(err){
-      console.warn('KTX2 loader setup failed:', err);
-    }
-  }
-
-  if(window.MeshoptDecoder){
-    try{
-      loader.setMeshoptDecoder(window.MeshoptDecoder);
-    }catch(err){
-      console.warn('Meshopt decoder setup failed:', err);
-    }
-  }
-
-  return loader;
-}
-
-function showImportOverlay(title='Importing model…', sub='Preparing import', pct=0){
-  importOverlay.classList.add('show');
-  importTitle.textContent = title;
-  importSub.textContent = sub;
-  importBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
-}
-
-function updateImportOverlay(pct, sub){
-  importBarFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
-  if(sub !== undefined) importSub.textContent = sub;
-}
-
-function hideImportOverlay(){
-  importOverlay.classList.remove('show');
-  importBarFill.style.width = '0%';
-  importSub.textContent = 'Preparing import';
-}
 
 // ── TOGGLES ───────────────────────────────────────────────────────────────
 function setupToggle(id, descId, onCb){
@@ -568,7 +520,7 @@ function setupToggle(id, descId, onCb){
 
 setupToggle('objToggle','objDesc', on=>{
   objMode = on;
-  if(on){
+  if(on){ // disable limbs
     document.getElementById('limbToggle').classList.remove('on');
     document.getElementById('limbDesc').classList.remove('show');
     document.getElementById('limbJointSub').classList.remove('show');
@@ -605,187 +557,98 @@ document.getElementById('joint2Btn').addEventListener('click',()=>{
 fmtJson.addEventListener('click',()=>{outputFmt='json';fmtJson.classList.add('sel');fmtLevel.classList.remove('sel');});
 fmtLevel.addEventListener('click',()=>{outputFmt='level';fmtLevel.classList.add('sel');fmtJson.classList.remove('sel');});
 
-function updateAnimationSelection(idx){
-  document.getElementById('sDur').textContent = (animations[idx]?.duration||0).toFixed(1);
+// ── THREE.JS SETUP ────────────────────────────────────────────────────────
+function initThree(){
+  if(renderer) return;
+  const w = previewCanvas.parentElement.clientWidth || 600;
+  const h = 220;
+  renderer = new THREE.WebGLRenderer({canvas:previewCanvas, antialias:true, alpha:true});
+  renderer.setSize(w, h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.setClearColor(0x07080d, 1);
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, w/h, 0.01, 1000);
+  camera.position.set(0, 1.5, 4);
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  const dirLight = new THREE.DirectionalLight(0xc084fc, 0.8);
+  dirLight.position.set(2, 4, 3);
+  scene.add(ambient, dirLight);
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.target.set(0, 1, 0);
+
+  previewClock = new THREE.Clock();
+  renderLoop();
+}
+
+function renderLoop(){
+  previewAnimFrame = requestAnimationFrame(renderLoop);
+  if(controls) controls.update();
+  if(previewMixer && previewPlaying){
+    const dt = previewClock.getDelta();
+    previewMixer.update(dt);
+    if(previewAction){
+      const t = previewAction.time;
+      tlScrub.value = (t / animDuration * 100).toFixed(1);
+      tlTime.textContent = t.toFixed(2)+'s';
+      document.getElementById('previewFrame').textContent = t.toFixed(2)+'s / '+animDuration.toFixed(2)+'s';
+    }
+  }
+  if(renderer) renderer.render(scene, camera);
 }
 
 // ── MODEL LOADING ─────────────────────────────────────────────────────────
-async function loadModelFile(fileList){
-  const files = Array.from(fileList || []);
-  if(!files.length) return;
-
-  const rootFile = files.find(file => /\.(glb|gltf)$/i.test(file.name));
-  if(!rootFile){
-    ss('No .glb or .gltf asset found.','err');
-    return;
-  }
-
-  const isGLB = /\.glb$/i.test(rootFile.name);
-  const rootPath = (rootFile.webkitRelativePath || rootFile.name).replace(/[^\/]*$/, '');
-
+function loadModelFile(file){
+  if(!file) return;
+  if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
   ss('Loading model…','load');
-  showImportOverlay('Importing model…', 'Reading file…', 5);
-  await new Promise(requestAnimationFrame);
+  const url = URL.createObjectURL(file);
+  initThree();
+  // Remove previous model
+  if(scene) scene.children.filter(c=>c.userData.isModel).forEach(c=>scene.remove(c));
+  if(previewMixer){ previewMixer.stopAllAction(); previewMixer = null; }
 
-  const loadingManager = new THREE.LoadingManager();
-  loadingManager.onError = (url)=> {
-    console.warn('Failed to load referenced asset:', url);
-  };
-
-  const fileMap = new Map();
-  const blobURLs = [];
-  let done = false;
-
-  for(const file of files){
-    const key = file.webkitRelativePath || file.name;
-    fileMap.set(key.replace(/\\/g, '/'), file);
-    fileMap.set(file.name.replace(/\\/g, '/'), file);
-  }
-
-  const cleanup = ()=>{
-    while(blobURLs.length){
-      try{ URL.revokeObjectURL(blobURLs.pop()); } catch {}
-    }
-  };
-
-  const resolveFile = (url, path='') => {
-    const clean = decodeURI(String(url || '')).replace(/^\.\/?/, '');
-    const clean2 = clean.replace(/^\/+/, '');
-    const candidateList = [
-      (path || '') + clean,
-      (path || '') + clean2,
-      rootPath + clean,
-      rootPath + clean2,
-      clean,
-      clean2
-    ];
-    for(const key of candidateList){
-      const normalized = key.replace(/\\/g, '/');
-      if(fileMap.has(normalized)) return fileMap.get(normalized);
-    }
-    return null;
-  };
-
-  loadingManager.setURLModifier((url, path)=>{
-    if(/^data:|^blob:|^https?:/i.test(url)) return url;
-    const file = resolveFile(url, path);
-    if(file){
-      const blobURL = URL.createObjectURL(file);
-      blobURLs.push(blobURL);
-      return blobURL;
-    }
-    return (path || '') + url;
-  });
-
-  const loader = createGLTFLoader(loadingManager);
-
-  const parseGLTF = async (data, path='') => {
-    if(loader.parseAsync){
-      return await loader.parseAsync(data, path);
-    }
-    return await new Promise((resolve, reject)=>{
-      try{
-        loader.parse(data, path, resolve, reject);
-      }catch(err){
-        reject(err);
-      }
-    });
-  };
-
-  const readRoot = () => new Promise((resolve, reject)=>{
-    const reader = new FileReader();
-    reader.onerror = ()=>reject(reader.error || new Error('Could not read file.'));
-    reader.onabort = ()=>reject(new Error('File read aborted.'));
-    reader.onprogress = evt=>{
-      if(done) return;
-      if(evt && evt.lengthComputable && evt.total > 0){
-        const pct = Math.max(1, Math.min(45, Math.round((evt.loaded / evt.total) * 45)));
-        updateImportOverlay(pct, `Reading file… ${Math.round((evt.loaded / evt.total) * 100)}%`);
-      }
-    };
-    reader.onload = ()=>resolve(reader.result);
-    if(isGLB) reader.readAsArrayBuffer(rootFile);
-    else reader.readAsText(rootFile);
-  });
-
-  const failLoad = err=>{
-    if(done) return;
-    done = true;
-    cleanup();
-    hideImportOverlay();
-    const msg = err?.message || String(err || 'Unknown error');
-    ss('Failed to load model: ' + msg, 'err');
-    console.error(err);
-  };
-
-  try{
-    updateImportOverlay(9, 'Reading file…');
-    const rootData = await readRoot();
-    if(done) return;
-    updateImportOverlay(isGLB ? 55 : 50, isGLB ? 'Parsing GLB…' : 'Parsing GLTF…');
-    await new Promise(requestAnimationFrame);
-
-    let gltf;
-    try{
-      gltf = await parseGLTF(rootData, rootPath);
-    }catch(parseErr){
-      if(!isGLB){
-        const fallbackData = await new Promise((resolve, reject)=>{
-          const reader = new FileReader();
-          reader.onerror = ()=>reject(reader.error || new Error('Could not read file.'));
-          reader.onload = ()=>resolve(reader.result);
-          reader.readAsArrayBuffer(rootFile);
-        });
-        gltf = await parseGLTF(fallbackData, rootPath);
-      } else {
-        throw parseErr;
-      }
-    }
-    if(done) return;
-    updateImportOverlay(80, 'Finalizing model…');
-    await new Promise(requestAnimationFrame);
-
-    done = true;
-    cleanup();
-
+  const loader = new THREE.GLTFLoader();
+  loader.load(url, gltf=>{
+    URL.revokeObjectURL(url);
     gltfData = gltf;
     animations = gltf.animations || [];
 
+    // Add to scene
     const model = gltf.scene;
     model.userData.isModel = true;
+    // Auto-scale to fit view
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3()).length();
+    const center = box.getCenter(new THREE.Vector3());
+    if(size > 0){
+      const s = 3 / size;
+      model.scale.setScalar(s);
+      model.position.sub(center.multiplyScalar(s));
+      model.position.y += 1;
+    }
+    scene.add(model);
+    previewEmpty.style.display='none';
 
+    // Collect all bones
     modelBones = [];
-    const seenBones = new Set();
-
     model.traverse(obj=>{
-      if(obj.isSkinnedMesh && obj.skeleton && Array.isArray(obj.skeleton.bones)){
-        for(const bone of obj.skeleton.bones){
-          if(!bone || !bone.name || seenBones.has(bone.name)) continue;
-          seenBones.add(bone.name);
-          modelBones.push({name: bone.name, obj: bone});
-        }
+      if(obj.isBone || obj.type==='Bone' || (obj.name && obj.name.length>0 && obj.parent)){
+        modelBones.push({name:obj.name, obj});
       }
     });
-
-    if(modelBones.length === 0){
-      model.traverse(obj=>{
-        if((obj.isBone || obj.type === 'Bone') && obj.name && !seenBones.has(obj.name)){
-          seenBones.add(obj.name);
-          modelBones.push({name: obj.name, obj});
-        }
-      });
-    }
-
-    boneLookup = new Map();
-    sortedBonesByY = [...modelBones].sort((a,b)=>{
-      const ya = a.obj.getWorldPosition(new THREE.Vector3()).y;
-      const yb = b.obj.getWorldPosition(new THREE.Vector3()).y;
-      return ya - yb;
+    // Deduplicate
+    const seen = new Set();
+    modelBones = modelBones.filter(b=>{
+      if(seen.has(b.name)) return false;
+      seen.add(b.name); return true;
     });
-    for(const b of modelBones){
-      boneLookup.set(b.name, b.obj);
-    }
 
+    // Populate animation selector
     animSelField.style.display = animations.length > 0 ? 'flex' : 'none';
     animSel.innerHTML = '';
     animations.forEach((anim, i)=>{
@@ -795,23 +658,69 @@ async function loadModelFile(fileList){
       animSel.appendChild(o);
     });
 
+    // Setup mixer with first animation
+    if(animations.length > 0){
+      previewMixer = new THREE.AnimationMixer(model);
+      playAnimation(0);
+    }
+
+    // Update stats
     document.getElementById('sBones').textContent = modelBones.length;
     document.getElementById('sAnims').textContent = animations.length;
     document.getElementById('sDur').textContent = animations.length ? animations[0].duration.toFixed(1) : '—';
 
+    // Model loaded marker
     modelDrop.classList.add('loaded');
-    modelDrop.querySelector('.drop-txt').innerHTML = `<strong>${rootFile.name}</strong><br>${modelBones.length} bones · ${animations.length} animations`;
+    modelDrop.querySelector('.drop-txt').innerHTML = `<strong>${file.name}</strong><br>${modelBones.length} bones · ${animations.length} animations`;
 
     rebuildBoneMap();
     updateBuildBtn();
-    hideImportOverlay();
-    ss(`Loaded "${rootFile.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
-  }catch(err){
-    failLoad(err);
-  }
+    timelineWrap.style.display='flex';
+    ss(`Loaded "${file.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
+
+  }, undefined, err=>{
+    URL.revokeObjectURL(url);
+    ss('Failed to load model: '+err.message,'err');
+  });
 }
 
-// ── JSON LOADING ──────────────────────────────────────────────────────────
+function playAnimation(idx){
+  if(!previewMixer || !animations[idx]) return;
+  if(previewAction) previewAction.stop();
+  animDuration = animations[idx].duration;
+  document.getElementById('sDur').textContent = animDuration.toFixed(1);
+  previewAction = previewMixer.clipAction(animations[idx]);
+  previewAction.setLoop(THREE.LoopRepeat);
+  previewAction.play();
+  previewPlaying = true;
+  previewClock.start();
+  playPreviewBtn.textContent = '⏸';
+  tlScrub.max = 100;
+}
+
+animSel.addEventListener('change', ()=>{
+  const idx = +animSel.value;
+  playAnimation(idx);
+  rebuildBoneMap();
+  document.getElementById('sDur').textContent = (animations[idx]?.duration||0).toFixed(1);
+});
+
+playPreviewBtn.addEventListener('click',()=>{
+  previewPlaying = !previewPlaying;
+  playPreviewBtn.textContent = previewPlaying ? '⏸' : '▶';
+  if(previewPlaying) previewClock.start();
+});
+
+tlScrub.addEventListener('input',()=>{
+  if(!previewAction || !animDuration) return;
+  previewPlaying = false;
+  playPreviewBtn.textContent = '▶';
+  const t = (+tlScrub.value/100) * animDuration;
+  previewAction.time = t;
+  previewMixer.update(0);
+  tlTime.textContent = t.toFixed(2)+'s';
+});
+
 // ── JSON LOADING ──────────────────────────────────────────────────────────
 function loadJsonFile(file){
   if(!file) return;
@@ -877,7 +786,7 @@ function guessBone(groupName){
   const keywords = BONE_KEYWORDS[groupName] || [groupName.toLowerCase()];
   // Exact match first
   for(const kw of keywords){
-    const found = boneLookup.get(kw) || modelBones.find(b=>b.name.toLowerCase()===kw);
+    const found = modelBones.find(b=>b.name.toLowerCase()===kw);
     if(found) return {bone:found, confidence:'good'};
   }
   // Partial match
@@ -885,8 +794,12 @@ function guessBone(groupName){
     const found = modelBones.find(b=>b.name.toLowerCase().includes(kw)||kw.includes(b.name.toLowerCase()));
     if(found) return {bone:found, confidence:'guess'};
   }
-  // Fallback: positional heuristics by group (uses cached order)
-  const sorted = sortedBonesByY.length ? sortedBonesByY : modelBones;
+  // Fallback: positional heuristics by group
+  const sorted = [...modelBones].sort((a,b)=>{
+    const ya = a.obj.getWorldPosition(new THREE.Vector3()).y;
+    const yb = b.obj.getWorldPosition(new THREE.Vector3()).y;
+    return ya - yb; // lowest to highest
+  });
   if(groupName==='body' && sorted.length>0) return {bone:sorted[Math.floor(sorted.length*0.4)], confidence:'guess'};
   if(groupName==='head' && sorted.length>0) return {bone:sorted[sorted.length-1], confidence:'guess'};
   return null;
@@ -955,10 +868,10 @@ function updateBuildBtn(){
 }
 
 // ── FILE EVENTS ───────────────────────────────────────────────────────────
-modelFile.addEventListener('change', e=>loadModelFile(e.target.files));
+modelFile.addEventListener('change', e=>loadModelFile(e.target.files[0]));
 modelDrop.addEventListener('dragover', e=>{e.preventDefault();modelDrop.classList.add('ov');});
 modelDrop.addEventListener('dragleave', ()=>modelDrop.classList.remove('ov'));
-modelDrop.addEventListener('drop', e=>{e.preventDefault();modelDrop.classList.remove('ov');loadModelFile(e.dataTransfer.files);});
+modelDrop.addEventListener('drop', e=>{e.preventDefault();modelDrop.classList.remove('ov');loadModelFile(e.dataTransfer.files[0]);});
 
 jsonFile.addEventListener('change', e=>loadJsonFile(e.target.files[0]));
 jsonDrop.addEventListener('dragover', e=>{e.preventDefault();jsonDrop.classList.add('ov');});
@@ -1005,7 +918,7 @@ function buildLevel(){
     mixer.setTime(t);
     for(const [groupName, boneName] of boneMap){
       if(!boneName) continue;
-      const boneObj = boneLookup.get(boneName) || modelBones.find(b=>b.name===boneName)?.obj;
+      const boneObj = modelBones.find(b=>b.name===boneName)?.obj;
       if(!boneObj) continue;
       const wp = new THREE.Vector3();
       const wr = new THREE.Quaternion();
@@ -1099,6 +1012,14 @@ cpBtn.addEventListener('click', async()=>{
   catch{ expStatus.textContent='Copy failed — use Download.'; }
 });
 
+// Resize handler
+window.addEventListener('resize',()=>{
+  if(!renderer) return;
+  const w = previewCanvas.parentElement.clientWidth || 600;
+  renderer.setSize(w, 220);
+  camera.aspect = w/220;
+  camera.updateProjectionMatrix();
+});
 
 })();
 </script>
