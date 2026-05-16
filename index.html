@@ -249,7 +249,7 @@ select option{background:var(--s2)}
           <div class="field">
             <label>3D Model File</label>
             <div class="drop" id="modelDrop">
-              <input type="file" id="modelFile" accept=".glb,.gltf"/>
+              <input type="file" id="modelFile" accept=".glb,.gltf" multiple webkitdirectory/>
               <div class="drop-ico">🦴</div>
               <div class="drop-txt"><strong>Drop GLB or GLTF here</strong><br>Must contain a skeleton + animations</div>
             </div>
@@ -431,10 +431,25 @@ select option{background:var(--s2)}
 <!-- three.js from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/DRACOLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/KTX2Loader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/libs/meshopt_decoder.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+window.DRACOLoader = DRACOLoader;
+window.KTX2Loader = KTX2Loader;
+window.MeshoptDecoder = MeshoptDecoder;
+</script>
 
 <script>
 'use strict';
@@ -518,12 +533,12 @@ const fmtLevel   = document.getElementById('fmtLevel');
 
 const ss = (msg, cls='') => { statusEl.className='status'+(cls?' '+cls:''); statusEl.textContent=msg; };
 
-function createGLTFLoader(){
-  const loader = new THREE.GLTFLoader();
+function createGLTFLoader(manager){
+  const loader = new THREE.GLTFLoader(manager);
 
-  if(THREE.DRACOLoader){
+  if(window.DRACOLoader){
     try{
-      const dracoLoader = new THREE.DRACOLoader();
+      const dracoLoader = new window.DRACOLoader();
       dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/draco/');
       loader.setDRACOLoader(dracoLoader);
     }catch(err){
@@ -531,9 +546,9 @@ function createGLTFLoader(){
     }
   }
 
-  if(THREE.KTX2Loader){
+  if(window.KTX2Loader){
     try{
-      const ktx2Loader = new THREE.KTX2Loader();
+      const ktx2Loader = new window.KTX2Loader();
       ktx2Loader.setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/basis/');
       if(renderer) ktx2Loader.detectSupport(renderer);
       loader.setKTX2Loader(ktx2Loader);
@@ -542,9 +557,9 @@ function createGLTFLoader(){
     }
   }
 
-  if(window.MeshoptDecoder || typeof MeshoptDecoder !== 'undefined'){
+  if(window.MeshoptDecoder){
     try{
-      loader.setMeshoptDecoder(window.MeshoptDecoder || MeshoptDecoder);
+      loader.setMeshoptDecoder(window.MeshoptDecoder);
     }catch(err){
       console.warn('Meshopt decoder setup failed:', err);
     }
@@ -687,46 +702,78 @@ function renderLoop(){
 }
 
 // ── MODEL LOADING ─────────────────────────────────────────────────────────
-function loadModelFile(file){
-  if(!file) return;
-  if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
+function loadModelFile(fileList){
+  const files = Array.from(fileList || []);
+  if(!files.length) return;
+
+  const rootFile = files.find(file => /\.(glb|gltf)$/i.test(file.name));
+  if(!rootFile){
+    ss('No .glb or .gltf asset found.','err');
+    return;
+  }
+
   ss('Loading model…','load');
-  showImportOverlay('Importing model…', 'Opening file…', 3);
+  showImportOverlay('Importing model…', 'Opening file set…', 3);
   initThree();
 
   // Remove previous model
   if(scene) scene.children.filter(c=>c.userData.isModel).forEach(c=>scene.remove(c));
   if(previewMixer){ previewMixer.stopAllAction(); previewMixer = null; }
 
-  const loader = createGLTFLoader();
+  const loadingManager = new THREE.LoadingManager();
+  const fileMap = new Map();
+  const blobURLs = [];
   let done = false;
   let loadHintTimer = null;
 
+  for(const file of files){
+    const path = file.webkitRelativePath || file.name;
+    fileMap.set(path, file);
+  }
+
+  const rootPath = (rootFile.webkitRelativePath || rootFile.name).replace(rootFile.name, '');
+  const rootURL = URL.createObjectURL(rootFile);
+  blobURLs.push(rootURL);
+
   const cleanup = ()=>{
-    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
+    while(blobURLs.length){
+      URL.revokeObjectURL(blobURLs.pop());
+    }
   };
+
+  const baseURL = THREE.LoaderUtils.extractUrlBase(rootURL);
+  loadingManager.setURLModifier((url, path)=>{
+    const normalizedURL = rootPath + decodeURI(url)
+      .replace(baseURL, '')
+      .replace(/^(\.?\/)/, '');
+    if(fileMap.has(normalizedURL)){
+      const blob = fileMap.get(normalizedURL);
+      const blobURL = URL.createObjectURL(blob);
+      blobURLs.push(blobURL);
+      return blobURL;
+    }
+    return (path || '') + url;
+  });
+
+  const loader = createGLTFLoader(loadingManager);
 
   const finishLoad = gltf=>{
     if(done) return;
     done = true;
+    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
     cleanup();
+
     gltfData = gltf;
     animations = gltf.animations || [];
 
-    // Add to scene first so the model appears as soon as parsing is done.
     const model = gltf.scene;
     model.userData.isModel = true;
     scene.add(model);
     previewEmpty.style.display='none';
 
-    // Defer the heavier post-processing to the next frame so the UI can paint.
     requestAnimationFrame(()=>{
       updateImportOverlay(92, 'Finalizing model…');
 
-      // Skip the expensive auto-fit pass during import so the model appears sooner.
-      // The user can still inspect the loaded model in the preview immediately.
-
-      // Collect bones from skinned meshes first (much faster than traversing every object).
       modelBones = [];
       const seenBones = new Set();
 
@@ -740,7 +787,6 @@ function loadModelFile(file){
         }
       });
 
-      // Fallback: if no skinned-mesh bones were found, keep actual bones only.
       if(modelBones.length === 0){
         model.traverse(obj=>{
           if((obj.isBone || obj.type === 'Bone') && obj.name && !seenBones.has(obj.name)){
@@ -755,7 +801,6 @@ function loadModelFile(file){
         boneLookup.set(b.name, b.obj);
       }
 
-      // Populate animation selector
       animSelField.style.display = animations.length > 0 ? 'flex' : 'none';
       animSel.innerHTML = '';
       animations.forEach((anim, i)=>{
@@ -765,35 +810,34 @@ function loadModelFile(file){
         animSel.appendChild(o);
       });
 
-      // Setup mixer with first animation
       if(animations.length > 0){
         previewMixer = new THREE.AnimationMixer(model);
         playAnimation(0);
       }
 
-      // Update stats
       document.getElementById('sBones').textContent = modelBones.length;
       document.getElementById('sAnims').textContent = animations.length;
       document.getElementById('sDur').textContent = animations.length ? animations[0].duration.toFixed(1) : '—';
 
-      // Model loaded marker
       modelDrop.classList.add('loaded');
-      modelDrop.querySelector('.drop-txt').innerHTML = `<strong>${file.name}</strong><br>${modelBones.length} bones · ${animations.length} animations`;
+      modelDrop.querySelector('.drop-txt').innerHTML = `<strong>${rootFile.name}</strong><br>${modelBones.length} bones · ${animations.length} animations`;
 
       rebuildBoneMap();
       updateBuildBtn();
       timelineWrap.style.display='flex';
       hideImportOverlay();
-      ss(`Loaded "${file.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
+      ss(`Loaded "${rootFile.name}" — ${modelBones.length} bones, ${animations.length} animations.`,'ok');
     });
   };
 
   const failLoad = err=>{
     if(done) return;
     done = true;
+    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
     cleanup();
     hideImportOverlay();
     ss('Failed to load model: ' + (err?.message || err), 'err');
+    console.error(err);
   };
 
   loadHintTimer = setTimeout(()=>{
@@ -801,54 +845,23 @@ function loadModelFile(file){
     updateImportOverlay(16, 'Reading model…');
   }, 250);
 
-  const isGLTF = /\.gltf$/i.test(file.name);
-
-  if(isGLTF){
-    const reader = new FileReader();
-    reader.onprogress = e=>{
+  loader.load(
+    rootURL,
+    gltf=>{
+      updateImportOverlay(78, 'Parsing model…');
+      requestAnimationFrame(()=>finishLoad(gltf));
+    },
+    xhr=>{
       if(done) return;
-      if(e.lengthComputable && e.total > 0){
-        const pct = Math.max(1, Math.min(70, Math.round((e.loaded / e.total) * 70)));
-        updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
+      if(xhr && xhr.lengthComputable && xhr.total > 0){
+        const pct = Math.max(1, Math.min(88, Math.round((xhr.loaded / xhr.total) * 88)));
+        updateImportOverlay(pct, `Reading file… ${Math.round((xhr.loaded / xhr.total) * 100)}%`);
       }
-    };
-    reader.onerror = ()=>failLoad(new Error('Could not read file'));
-    reader.onload = async e=>{
-      try{
-        updateImportOverlay(78, 'Parsing model…');
-        const text = e.target.result;
-        const gltf = await loader.parseAsync(text, '');
-        updateImportOverlay(90, 'Finalizing model…');
-        requestAnimationFrame(()=>finishLoad(gltf));
-      }catch(err){
-        failLoad(err);
-      }
-    };
-    reader.readAsText(file);
-  } else {
-    const reader = new FileReader();
-    reader.onprogress = e=>{
-      if(done) return;
-      if(e.lengthComputable && e.total > 0){
-        const pct = Math.max(1, Math.min(70, Math.round((e.loaded / e.total) * 70)));
-        updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
-      }
-    };
-    reader.onerror = ()=>failLoad(new Error('Could not read file'));
-    reader.onload = async e=>{
-      try{
-        updateImportOverlay(78, 'Parsing model…');
-        const buffer = e.target.result;
-        const gltf = await loader.parseAsync(buffer, '');
-        updateImportOverlay(90, 'Finalizing model…');
-        requestAnimationFrame(()=>finishLoad(gltf));
-      }catch(err){
-        failLoad(err);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  }
+    },
+    err=>failLoad(err)
+  );
 }
+
 
 function playAnimation(idx){
   if(!previewMixer || !animations[idx]) return;
@@ -1030,10 +1043,10 @@ function updateBuildBtn(){
 }
 
 // ── FILE EVENTS ───────────────────────────────────────────────────────────
-modelFile.addEventListener('change', e=>loadModelFile(e.target.files[0]));
+modelFile.addEventListener('change', e=>loadModelFile(e.target.files));
 modelDrop.addEventListener('dragover', e=>{e.preventDefault();modelDrop.classList.add('ov');});
 modelDrop.addEventListener('dragleave', ()=>modelDrop.classList.remove('ov'));
-modelDrop.addEventListener('drop', e=>{e.preventDefault();modelDrop.classList.remove('ov');loadModelFile(e.dataTransfer.files[0]);});
+modelDrop.addEventListener('drop', e=>{e.preventDefault();modelDrop.classList.remove('ov');loadModelFile(e.dataTransfer.files);});
 
 jsonFile.addEventListener('change', e=>loadJsonFile(e.target.files[0]));
 jsonDrop.addEventListener('dragover', e=>{e.preventDefault();jsonDrop.classList.add('ov');});
