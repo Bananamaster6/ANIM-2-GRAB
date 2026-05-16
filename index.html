@@ -653,8 +653,7 @@ function loadModelFile(file){
   if(!file) return;
   if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
   ss('Loading model…','load');
-  showImportOverlay('Importing model…', 'Reading file…', 0);
-  startImportPulse();
+  showImportOverlay('Importing model…', 'Opening file…', 3);
   initThree();
 
   // Remove previous model
@@ -662,8 +661,19 @@ function loadModelFile(file){
   if(previewMixer){ previewMixer.stopAllAction(); previewMixer = null; }
 
   const loader = new THREE.GLTFLoader();
+  const url = URL.createObjectURL(file);
+  let done = false;
+  let loadHintTimer = null;
+
+  const cleanup = ()=>{
+    if(loadHintTimer){ clearTimeout(loadHintTimer); loadHintTimer = null; }
+    URL.revokeObjectURL(url);
+  };
 
   const finishLoad = gltf=>{
+    if(done) return;
+    done = true;
+    cleanup();
     gltfData = gltf;
     animations = gltf.animations || [];
 
@@ -680,48 +690,34 @@ function loadModelFile(file){
       // Skip the expensive auto-fit pass during import so the model appears sooner.
       // The user can still inspect the loaded model in the preview immediately.
 
-      // Collect bones from skinned meshes first (much faster than traversing everything).
+      // Collect bones from skinned meshes first (much faster than traversing every object).
       modelBones = [];
-      boneLookup.clear();
-      const seen = new Set();
+      const seenBones = new Set();
 
       model.traverse(obj=>{
         if(obj.isSkinnedMesh && obj.skeleton && Array.isArray(obj.skeleton.bones)){
           for(const bone of obj.skeleton.bones){
-            if(!bone || !bone.name || seen.has(bone.uuid)) continue;
-            seen.add(bone.uuid);
+            if(!bone || !bone.name || seenBones.has(bone.name)) continue;
+            seenBones.add(bone.name);
             modelBones.push({name: bone.name, obj: bone});
           }
         }
       });
 
-      // Fallback for models that expose bones directly but not through skinned meshes.
+      // Fallback: if no skinned-mesh bones were found, keep actual bones only.
       if(modelBones.length === 0){
         model.traverse(obj=>{
-          if((obj.isBone || obj.type === 'Bone') && obj.name && !seen.has(obj.uuid)){
-            seen.add(obj.uuid);
+          if((obj.isBone || obj.type === 'Bone') && obj.name && !seenBones.has(obj.name)){
+            seenBones.add(obj.name);
             modelBones.push({name: obj.name, obj});
           }
         });
       }
 
-      // Deduplicate by name while preserving order.
-      const byName = new Set();
-      modelBones = modelBones.filter(b=>{
-        if(byName.has(b.name)) return false;
-        byName.add(b.name);
-        return true;
-      });
-
+      boneLookup = new Map();
       for(const b of modelBones){
         boneLookup.set(b.name, b.obj);
       }
-
-      sortedBonesByY = [...modelBones].sort((a,b)=>{
-        const ya = a.obj.position?.y ?? 0;
-        const yb = b.obj.position?.y ?? 0;
-        return ya - yb;
-      });
 
       // Populate animation selector
       animSelField.style.display = animations.length > 0 ? 'flex' : 'none';
@@ -757,53 +753,33 @@ function loadModelFile(file){
   };
 
   const failLoad = err=>{
+    if(done) return;
+    done = true;
+    cleanup();
     hideImportOverlay();
     ss('Failed to load model: ' + (err?.message || err), 'err');
   };
 
-  const reader = new FileReader();
-  reader.onerror = ()=>{
-    hideImportOverlay();
-    ss('Could not read model file.','err');
-  };
-  reader.onloadstart = ()=>{
-    updateImportOverlay(10, 'Reading file…');
-    startImportPulse();
-  };
-  reader.onprogress = e=>{
-    if(!e.lengthComputable){
-      return;
-    }
-    const pct = Math.max(1, Math.min(85, Math.round((e.loaded / e.total) * 85)));
-    updateImportOverlay(pct, `Reading file… ${Math.round((e.loaded / e.total) * 100)}%`);
-  };
-  reader.onload = e=>{
-    stopImportPulse();
-    updateImportOverlay(95, 'Parsing model…');
-    try{
-      loader.parse(
-        e.target.result,
-        '',
-        gltf=>{
-          // Let the UI paint the loading state before heavier post-processing.
-          requestAnimationFrame(()=>finishLoad(gltf));
-        },
-        err=>{
-          hideImportOverlay();
-          failLoad(err);
-        }
-      );
-    }catch(err){
-      hideImportOverlay();
-      failLoad(err);
-    }
-  };
+  loadHintTimer = setTimeout(()=>{
+    if(done) return;
+    updateImportOverlay(16, 'Reading model…');
+  }, 250);
 
-  if(/\.glb$/i.test(file.name)){
-    reader.readAsArrayBuffer(file);
-  }else{
-    reader.readAsText(file);
-  }
+  loader.load(
+    url,
+    gltf=>{
+      updateImportOverlay(78, 'Parsing model…');
+      requestAnimationFrame(()=>finishLoad(gltf));
+    },
+    xhr=>{
+      if(done) return;
+      if(xhr && xhr.lengthComputable && xhr.total > 0){
+        const pct = Math.max(1, Math.min(88, Math.round((xhr.loaded / xhr.total) * 88)));
+        updateImportOverlay(pct, `Reading file… ${Math.round((xhr.loaded / xhr.total) * 100)}%`);
+      }
+    },
+    err=>failLoad(err)
+  );
 }
 
 function playAnimation(idx){
