@@ -426,6 +426,11 @@ select option{background:var(--s2)}
 <!-- three.js from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/DRACOLoader.js"></script>
+<script type="module">
+  import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/libs/meshopt_decoder.module.js";
+  window.MeshoptDecoder = MeshoptDecoder;
+</script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
 
 <script>
@@ -608,6 +613,24 @@ function renderLoop(){
 }
 
 // ── MODEL LOADING ─────────────────────────────────────────────────────────
+function createGLTFLoader(){
+  const loader = new THREE.GLTFLoader();
+
+  const dracoLoader = new THREE.DRACOLoader();
+  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+  loader.setDRACOLoader(dracoLoader);
+
+  if(window.MeshoptDecoder){
+    try {
+      loader.setMeshoptDecoder(window.MeshoptDecoder);
+    } catch (e) {
+      console.warn('Meshopt decoder setup failed:', e);
+    }
+  }
+
+  return loader;
+}
+
 function loadModelFile(file){
   if(!file) return;
   if(!/\.(glb|gltf)$/i.test(file.name)){ss('Please upload a .glb or .gltf file.','err');return;}
